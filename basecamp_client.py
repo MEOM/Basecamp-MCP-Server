@@ -98,12 +98,33 @@ class BasecampClient:
 
     # Project methods
     def get_projects(self):
-        """Get all projects."""
-        response = self.get('projects.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get projects: {response.status_code} - {response.text}")
+        """Get all projects, handling pagination.
+
+        Basecamp paginates list endpoints (commonly 15 items per page) and
+        exposes the next page via the HTTP `Link` header. This follows
+        pagination via the `page` query parameter, aggregating all pages
+        before returning the combined list.
+        """
+        all_projects = []
+        page = 1
+
+        while True:
+            response = self.get('projects.json', params={"page": page})
+            if response.status_code != 200:
+                raise Exception(f"Failed to get projects: {response.status_code} - {response.text}")
+
+            page_items = response.json() or []
+            all_projects.extend(page_items)
+
+            link_header = response.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header if link_header else False
+
+            if not page_items or not has_next:
+                break
+
+            page += 1
+
+        return all_projects
 
     def get_project(self, project_id):
         """Get a specific project by ID."""
@@ -123,17 +144,27 @@ class BasecampClient:
             raise Exception(f"Failed to get todoset for project: {project.id}. Project response: {project}")
     
     def get_todolists(self, project_id):
-        """Get all todolists for a project."""
+        """Get all todolists for a project, handling pagination."""
         # First get the todoset ID for this project
         todoset = self.get_todoset(project_id)
         todoset_id = todoset['id']
 
-        # Then get all todolists in this todoset
-        response = self.get(f'buckets/{project_id}/todosets/{todoset_id}/todolists.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get todolists: {response.status_code} - {response.text}")
+        # Then get all todolists in this todoset (follow pagination)
+        endpoint = f'buckets/{project_id}/todosets/{todoset_id}/todolists.json'
+        all_todolists = []
+        page = 1
+        while True:
+            response = self.get(endpoint, params={"page": page})
+            if response.status_code != 200:
+                raise Exception(f"Failed to get todolists: {response.status_code} - {response.text}")
+            page_items = response.json() or []
+            all_todolists.extend(page_items)
+            link_header = response.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header if link_header else False
+            if not page_items or not has_next:
+                break
+            page += 1
+        return all_todolists
 
     def get_todolist(self, project_id, todolist_id):
         """Get a specific todolist."""
@@ -507,29 +538,62 @@ class BasecampClient:
 
     # People methods
     def get_people(self):
-        """Get all people in the account."""
-        response = self.get('people.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get people: {response.status_code} - {response.text}")
+        """Get all people in the account, handling pagination."""
+        all_people = []
+        page = 1
+        while True:
+            response = self.get('people.json', params={"page": page})
+            if response.status_code != 200:
+                raise Exception(f"Failed to get people: {response.status_code} - {response.text}")
+            page_items = response.json() or []
+            all_people.extend(page_items)
+            link_header = response.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header if link_header else False
+            if not page_items or not has_next:
+                break
+            page += 1
+        return all_people
 
     # Campfire (chat) methods
     def get_campfires(self, project_id):
-        """Get the campfire for a project."""
-        response = self.get(f'buckets/{project_id}/chats.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get campfire: {response.status_code} - {response.text}")
+        """Get the campfires for a project, handling pagination."""
+        endpoint = f'buckets/{project_id}/chats.json'
+        all_campfires = []
+        page = 1
+        while True:
+            response = self.get(endpoint, params={"page": page})
+            if response.status_code != 200:
+                raise Exception(f"Failed to get campfire: {response.status_code} - {response.text}")
+            page_items = response.json() or []
+            all_campfires.extend(page_items)
+            link_header = response.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header if link_header else False
+            if not page_items or not has_next:
+                break
+            page += 1
+        return all_campfires
 
-    def get_campfire_lines(self, project_id, campfire_id):
-        """Get chat lines from a campfire."""
-        response = self.get(f'buckets/{project_id}/chats/{campfire_id}/lines.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get campfire lines: {response.status_code} - {response.text}")
+    def get_campfire_lines(self, project_id, campfire_id, max_lines=500):
+        """Get chat lines from a campfire, handling pagination.
+
+        Campfire chats can contain thousands of lines; this caps the result at
+        `max_lines` (default 500) to avoid huge payloads.
+        """
+        endpoint = f'buckets/{project_id}/chats/{campfire_id}/lines.json'
+        all_lines = []
+        page = 1
+        while True:
+            response = self.get(endpoint, params={"page": page})
+            if response.status_code != 200:
+                raise Exception(f"Failed to get campfire lines: {response.status_code} - {response.text}")
+            page_items = response.json() or []
+            all_lines.extend(page_items)
+            link_header = response.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header if link_header else False
+            if not page_items or not has_next or len(all_lines) >= max_lines:
+                break
+            page += 1
+        return all_lines[:max_lines]
 
     # Message board methods
     def get_message_board(self, project_id):
@@ -1099,12 +1163,22 @@ class BasecampClient:
 
     # Card Table Card methods
     def get_cards(self, project_id, column_id):
-        """Get all cards in a column."""
-        response = self.get(f'buckets/{project_id}/card_tables/lists/{column_id}/cards.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get cards: {response.status_code} - {response.text}")
+        """Get all cards in a column, handling pagination."""
+        endpoint = f'buckets/{project_id}/card_tables/lists/{column_id}/cards.json'
+        all_cards = []
+        page = 1
+        while True:
+            response = self.get(endpoint, params={"page": page})
+            if response.status_code != 200:
+                raise Exception(f"Failed to get cards: {response.status_code} - {response.text}")
+            page_items = response.json() or []
+            all_cards.extend(page_items)
+            link_header = response.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header if link_header else False
+            if not page_items or not has_next:
+                break
+            page += 1
+        return all_cards
 
     def get_card(self, project_id, card_id):
         """Get a specific card."""
